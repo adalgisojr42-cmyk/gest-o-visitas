@@ -87,7 +87,17 @@ const STATUS_COLORS = {
 const STORAGE_KEY = "igreja_visitas_v1";
 const loadLocal = () => {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    // Preserva TODOS os campos originais — apenas preenche campos NOVOS
+    // que ainda não existiam em registros antigos, sem sobrescrever nada
+    return raw.map((v) => ({
+      ...v, // preserva tudo que já existe no registro
+      id: v.id || Date.now().toString(),
+      modalidade: v.modalidade || "Presencial",
+      visitaVirtual: v.visitaVirtual || false,
+      resultadoLigacao: v.resultadoLigacao !== undefined ? v.resultadoLigacao : "",
+      duracao: v.duracao !== undefined ? v.duracao : "",
+    }));
   } catch {
     return [];
   }
@@ -652,6 +662,12 @@ function App() {
   const [filterStatus, setFilterStatus] = useState("");
   const [filterTipo, setFilterTipo] = useState("");
   const [activeTab, setActiveTab] = useState("lista");
+  const [dashFiltroTipo, setDashFiltroTipo] = useState("todos"); // "mes" | "periodo"
+  const hoje = new Date();
+  const mesAtualStr = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,"0")}`;
+  const [dashMes, setDashMes] = useState(mesAtualStr);
+  const [dashInicio, setDashInicio] = useState("");
+  const [dashFim, setDashFim] = useState("");
   const [sheetConnected] = useState(!!SHEET_URL);
 
   // Carregar dados
@@ -683,7 +699,15 @@ function App() {
     setSyncing(true);
     let updated;
     if (editing) {
-      updated = visitas.map((v) => (v.id === visita.id ? visita : v));
+      // Mescla com o registro original para nunca perder campos já salvos
+      const original = visitas.find((v) => v.id === visita.id) || {};
+      const merged = { ...original, ...visita };
+      // Garante que campos críticos não sejam sobrescritos por valores vazios
+      if (!visita.data && original.data) merged.data = original.data;
+      if (!visita.nome && original.nome) merged.nome = original.nome;
+      if (!visita.ministerio && original.ministerio) merged.ministerio = original.ministerio;
+      if (!visita.lider && original.lider) merged.lider = original.lider;
+      updated = visitas.map((v) => (v.id === merged.id ? merged : v));
     } else {
       updated = [visita, ...visitas];
     }
@@ -742,17 +766,43 @@ function App() {
     ministerios: [...new Set(visitas.map((v) => v.ministerio))].filter(Boolean).length,
   };
 
+  // Filtro de período para dashboard
+  const visitasDash = visitas.filter((v) => {
+    if (dashFiltroTipo === "todos") return true;
+    if (dashFiltroTipo === "mes" && dashMes) {
+      if (!v.data) return false;
+      return v.data.startsWith(dashMes);
+    }
+    if (dashFiltroTipo === "periodo") {
+      if (!v.data && (dashInicio || dashFim)) return false;
+      if (dashInicio && v.data < dashInicio) return false;
+      if (dashFim && v.data > dashFim) return false;
+      return true;
+    }
+    return true;
+  });
+
+  // Stats do dashboard (filtrados por período)
+  const statsDash = {
+    total: visitasDash.length,
+    presenciais: visitasDash.filter((v) => v.modalidade !== "Ligação").length,
+    ligacoes: visitasDash.filter((v) => v.modalidade === "Ligação").length,
+    visitasVirtuais: visitasDash.filter((v) => v.visitaVirtual).length,
+    realizadas: visitasDash.filter((v) => v.status === "Realizada").length,
+    agendadas: visitasDash.filter((v) => v.status === "Agendada").length,
+  };
+
   // Por ministério (para dashboard)
   const porMinisterio = MINISTERIOS.map((m) => ({
     nome: m,
-    total: visitas.filter((v) => v.ministerio === m).length,
-    realizadas: visitas.filter((v) => v.ministerio === m && v.status === "Realizada").length,
+    total: visitasDash.filter((v) => v.ministerio === m).length,
+    realizadas: visitasDash.filter((v) => v.ministerio === m && v.status === "Realizada").length,
   })).filter((m) => m.total > 0).sort((a, b) => b.total - a.total);
 
   // Por tipo
   const porTipo = TIPOS_VISITA.map((t) => ({
     nome: t,
-    total: visitas.filter((v) => v.tipo === t).length,
+    total: visitasDash.filter((v) => v.tipo === t).length,
   })).filter((t) => t.total > 0).sort((a, b) => b.total - a.total);
 
   const selectStyle = {
@@ -1145,12 +1195,70 @@ function App() {
         {/* ===== ABA: DASHBOARD ===== */}
         {activeTab === "dashboard" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Filtro de período */}
+            <div style={{ background: "#fff", borderRadius: 16, padding: "18px 22px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 800, fontSize: 14, color: "#1a1a2e", whiteSpace: "nowrap" }}>📅 Período:</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[{ id: "todos", label: "Todos" }, { id: "mes", label: "Por mês" }, { id: "periodo", label: "Intervalo" }].map((op) => (
+                  <button
+                    key={op.id}
+                    onClick={() => setDashFiltroTipo(op.id)}
+                    style={{
+                      padding: "7px 18px",
+                      borderRadius: 20,
+                      border: `2px solid ${dashFiltroTipo === op.id ? "#1a1a2e" : "#E5E7EB"}`,
+                      background: dashFiltroTipo === op.id ? "#1a1a2e" : "#fff",
+                      color: dashFiltroTipo === op.id ? "#fff" : "#6B7280",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {op.label}
+                  </button>
+                ))}
+              </div>
+
+              {dashFiltroTipo === "mes" && (
+                <input
+                  type="month"
+                  value={dashMes}
+                  onChange={(e) => setDashMes(e.target.value)}
+                  style={{ padding: "8px 14px", border: "1.5px solid #E5E7EB", borderRadius: 10, fontSize: 14, color: "#374151", fontFamily: "inherit", outline: "none", background: "#FAFAFA", cursor: "pointer" }}
+                />
+              )}
+
+              {dashFiltroTipo === "periodo" && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <input
+                    type="date"
+                    value={dashInicio}
+                    onChange={(e) => setDashInicio(e.target.value)}
+                    style={{ padding: "8px 14px", border: "1.5px solid #E5E7EB", borderRadius: 10, fontSize: 13, color: "#374151", fontFamily: "inherit", outline: "none", background: "#FAFAFA" }}
+                  />
+                  <span style={{ color: "#6B7280", fontWeight: 600 }}>até</span>
+                  <input
+                    type="date"
+                    value={dashFim}
+                    onChange={(e) => setDashFim(e.target.value)}
+                    style={{ padding: "8px 14px", border: "1.5px solid #E5E7EB", borderRadius: 10, fontSize: 13, color: "#374151", fontFamily: "inherit", outline: "none", background: "#FAFAFA" }}
+                  />
+                </div>
+              )}
+
+              <div style={{ marginLeft: "auto", fontSize: 13, color: "#6B7280", fontWeight: 600 }}>
+                {visitasDash.length} registro{visitasDash.length !== 1 ? "s" : ""} encontrado{visitasDash.length !== 1 ? "s" : ""}
+              </div>
+            </div>
+
             {/* Stats gerais */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
-              <StatCard label="Total de registros" value={stats.total} color="#1a1a2e" icon="📋" />
-              <StatCard label="Visitas presenciais" value={stats.presenciais} color="#0f3460" icon="🏠" />
-              <StatCard label="Ligações realizadas" value={stats.ligacoes} color="#2563EB" icon="📞" />
-              <StatCard label="Visitas virtuais" value={stats.visitasVirtuais} color="#059669" icon="✅" />
+              <StatCard label="Total de registros" value={statsDash.total} color="#1a1a2e" icon="📋" />
+              <StatCard label="Visitas presenciais" value={statsDash.presenciais} color="#0f3460" icon="🏠" />
+              <StatCard label="Ligações realizadas" value={statsDash.ligacoes} color="#2563EB" icon="📞" />
+              <StatCard label="Visitas virtuais" value={statsDash.visitasVirtuais} color="#059669" icon="✅" />
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -1225,14 +1333,14 @@ function App() {
             </div>
 
             {/* Ligações por resultado */}
-            {stats.ligacoes > 0 && (
+            {statsDash.ligacoes > 0 && (
               <div style={{ background: "#fff", borderRadius: 16, padding: 24, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
                 <div style={{ fontWeight: 800, fontSize: 15, color: "#1a1a2e", marginBottom: 16 }}>
                   📞 Ligações por Resultado
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
                   {RESULTADOS_LIGACAO.map((r) => {
-                    const count = visitas.filter((v) => v.modalidade === "Ligação" && v.resultadoLigacao === r).length;
+                    const count = visitasDash.filter((v) => v.modalidade === "Ligação" && v.resultadoLigacao === r).length;
                     return (
                       <div key={r} style={{ background: "#EFF6FF", borderRadius: 12, padding: "14px 16px", border: "1px solid #BFDBFE" }}>
                         <div style={{ fontSize: 24, fontWeight: 900, color: "#1D4ED8" }}>{count}</div>
@@ -1251,7 +1359,7 @@ function App() {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
                 {STATUS_OPTIONS.map((s) => {
-                  const count = visitas.filter((v) => v.status === s).length;
+                  const count = visitasDash.filter((v) => v.status === s).length;
                   const c = STATUS_COLORS[s];
                   return (
                     <div
