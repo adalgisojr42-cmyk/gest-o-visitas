@@ -644,6 +644,8 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [viewing, setViewing] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [search, setSearch] = useState("");
   const [filterModalidade, setFilterModalidade] = useState("");
   const [filterMin, setFilterMin] = useState("");
@@ -704,6 +706,14 @@ function App() {
         console.warn("Erro ao sincronizar com Sheets:", err);
       }
     }
+  };
+
+  // Deletar visita
+  const handleDelete = (id) => {
+    const updated = visitas.filter((v) => v.id !== id);
+    setVisitas(updated);
+    saveLocal(updated);
+    setConfirmDelete(null);
   };
 
   // Filtros
@@ -1072,23 +1082,59 @@ function App() {
                       </div>
                     )}
 
-                    <button
-                      onClick={() => { setEditing(v); setShowForm(true); }}
-                      style={{
-                        padding: "7px 14px",
-                        borderRadius: 8,
-                        border: "1.5px solid #E5E7EB",
-                        background: "#fff",
-                        color: "#374151",
-                        fontWeight: 600,
-                        fontSize: 12,
-                        cursor: "pointer",
-                        whiteSpace: "nowrap",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      ✏️ Editar
-                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        onClick={() => setViewing(v)}
+                        style={{
+                          padding: "7px 14px",
+                          borderRadius: 8,
+                          border: "1.5px solid #E5E7EB",
+                          background: "#fff",
+                          color: "#374151",
+                          fontWeight: 600,
+                          fontSize: 12,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        👁️ Ver
+                      </button>
+                      <button
+                        onClick={() => { setEditing(v); setShowForm(true); }}
+                        style={{
+                          padding: "7px 14px",
+                          borderRadius: 8,
+                          border: "1.5px solid #BFDBFE",
+                          background: "#EFF6FF",
+                          color: "#1D4ED8",
+                          fontWeight: 600,
+                          fontSize: 12,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        ✏️ Editar
+                      </button>
+                      <button
+                        onClick={() => setConfirmDelete(v)}
+                        style={{
+                          padding: "7px 14px",
+                          borderRadius: 8,
+                          border: "1.5px solid #FECACA",
+                          background: "#FEF2F2",
+                          color: "#DC2626",
+                          fontWeight: 600,
+                          fontSize: 12,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        🗑️ Excluir
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1402,6 +1448,94 @@ function resp(data) {
           onSave={handleSave}
           onCancel={() => { setShowForm(false); setEditing(null); }}
         />
+      )}
+
+      {/* MODAL VISUALIZAR */}
+      {viewing && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            {/* Header */}
+            <div style={{ background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)", padding: "22px 28px", borderRadius: "20px 20px 0 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>
+                  {viewing.modalidade === "Ligação" ? "📞 Detalhes da Ligação" : "🏠 Detalhes da Visita"}
+                </div>
+                <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>Visualização do registro</div>
+              </div>
+              <button onClick={() => setViewing(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "#fff", width: 32, height: 32, borderRadius: 8, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+            </div>
+            {/* Body */}
+            <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 14 }}>
+              {[
+                { label: "Nome", value: viewing.nome },
+                { label: "Telefone", value: viewing.telefone },
+                { label: "Ministério", value: viewing.ministerio },
+                { label: "Modalidade", value: viewing.modalidade || "Presencial" },
+                ...(viewing.modalidade !== "Ligação" ? [{ label: "Tipo de visita", value: viewing.tipo }] : []),
+                ...(viewing.modalidade === "Ligação" ? [
+                  { label: "Resultado", value: viewing.resultadoLigacao },
+                  { label: "Duração", value: viewing.duracao ? `${viewing.duracao} min` : null },
+                  { label: "Visita virtual", value: viewing.visitaVirtual ? "Sim" : "Não" },
+                ] : []),
+                { label: "Data", value: viewing.data ? new Date(viewing.data + "T12:00:00").toLocaleDateString("pt-BR") : null },
+                { label: "Líder responsável", value: viewing.lider },
+                { label: "Status", value: viewing.status },
+                { label: "Observações", value: viewing.observacoes },
+              ].filter(f => f.value).map((field) => (
+                <div key={field.label} style={{ display: "flex", gap: 12, borderBottom: "1px solid #F3F4F6", paddingBottom: 12 }}>
+                  <div style={{ width: 140, fontSize: 12, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: 0.3, flexShrink: 0, paddingTop: 2 }}>{field.label}</div>
+                  <div style={{ fontSize: 14, color: "#1a1a2e", fontWeight: 600, flex: 1 }}>
+                    {field.label === "Status" ? <Badge status={field.value} /> : field.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Footer */}
+            <div style={{ padding: "0 28px 24px", display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => { setViewing(null); setEditing(viewing); setShowForm(true); }}
+                style={{ padding: "10px 22px", borderRadius: 10, border: "1.5px solid #BFDBFE", background: "#EFF6FF", color: "#1D4ED8", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                ✏️ Editar
+              </button>
+              <button
+                onClick={() => setViewing(null)}
+                style={{ padding: "10px 22px", borderRadius: 10, border: "none", background: "linear-gradient(135deg, #1a1a2e, #16213e)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIRMAR EXCLUSÃO */}
+      {confirmDelete && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.2)", overflow: "hidden" }}>
+            <div style={{ background: "#FEF2F2", padding: "28px 28px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: 48, marginBottom: 8 }}>🗑️</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#991B1B" }}>Excluir registro?</div>
+              <div style={{ fontSize: 14, color: "#6B7280", marginTop: 8, lineHeight: 1.6 }}>
+                Tem certeza que deseja excluir o registro de <strong style={{ color: "#1a1a2e" }}>{confirmDelete.nome}</strong>? Esta ação não pode ser desfeita.
+              </div>
+            </div>
+            <div style={{ padding: "20px 28px", display: "flex", gap: 10 }}>
+              <button
+                onClick={() => setConfirmDelete(null)}
+                style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "1.5px solid #E5E7EB", background: "#fff", color: "#374151", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleDelete(confirmDelete.id)}
+                style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none", background: "#DC2626", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Sim, excluir
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
