@@ -85,6 +85,37 @@ const STATUS_COLORS = {
 // STORAGE LOCAL (fallback quando não há Google Sheets)
 // ============================================================
 const STORAGE_KEY = "igreja_visitas_v1";
+
+// Formata qualquer formato de data para DD/MM/AAAA com segurança
+const formatDate = (raw) => {
+  if (!raw) return "—";
+  try {
+    // Já está no formato DD/MM/AAAA
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(String(raw))) return raw;
+    // Formato AAAA-MM-DD (padrão HTML date input)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) {
+      const [y, m, d] = String(raw).split("-");
+      return `${d}/${m}/${y}`;
+    }
+    // Formato com barra AAAA/MM/DD
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(String(raw))) {
+      const [y, m, d] = String(raw).split("/");
+      return `${d}/${m}/${y}`;
+    }
+    // Número serial do Excel/Sheets (dias desde 30/12/1899)
+    if (!isNaN(Number(raw)) && Number(raw) > 40000) {
+      const excelEpoch = new Date(1899, 11, 30);
+      const d = new Date(excelEpoch.getTime() + Number(raw) * 86400000);
+      return d.toLocaleDateString("pt-BR");
+    }
+    // Tenta construir Date genérica como último recurso
+    const d = new Date(raw);
+    if (!isNaN(d.getTime())) return d.toLocaleDateString("pt-BR");
+    return String(raw); // retorna o valor original se nada funcionar
+  } catch {
+    return String(raw);
+  }
+};
 const loadLocal = () => {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
@@ -767,16 +798,42 @@ function App() {
   };
 
   // Filtro de período para dashboard
+  // Normaliza qualquer formato de data para YYYY-MM-DD para comparações seguras
+  const normalizeDate = (raw) => {
+    if (!raw) return "";
+    const s = String(raw).trim();
+    // YYYY-MM-DD (padrão)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    // DD/MM/YYYY
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+      const [d, m, y] = s.split("/");
+      return `${y}-${m}-${d}`;
+    }
+    // YYYY/MM/DD
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replace(/\//g, "-");
+    // Número serial Excel/Sheets
+    if (!isNaN(Number(s)) && Number(s) > 40000) {
+      const dt = new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
+      return dt.toISOString().split("T")[0];
+    }
+    try {
+      const dt = new Date(s);
+      if (!isNaN(dt.getTime())) return dt.toISOString().split("T")[0];
+    } catch {}
+    return s;
+  };
+
   const visitasDash = visitas.filter((v) => {
     if (dashFiltroTipo === "todos") return true;
+    const dataISO = normalizeDate(v.data);
     if (dashFiltroTipo === "mes" && dashMes) {
-      if (!v.data) return false;
-      return v.data.startsWith(dashMes);
+      if (!dataISO) return false;
+      return dataISO.startsWith(dashMes);
     }
     if (dashFiltroTipo === "periodo") {
-      if (!v.data && (dashInicio || dashFim)) return false;
-      if (dashInicio && v.data < dashInicio) return false;
-      if (dashFim && v.data > dashFim) return false;
+      if (!dataISO && (dashInicio || dashFim)) return false;
+      if (dashInicio && dataISO < dashInicio) return false;
+      if (dashFim && dataISO > dashFim) return false;
       return true;
     }
     return true;
@@ -1065,7 +1122,7 @@ function App() {
                         {v.nome}
                       </div>
                       <div style={{ fontSize: 12, color: "#6B7280", display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        <span>📅 {v.data ? new Date(v.data + "T12:00:00").toLocaleDateString("pt-BR") : "—"}</span>
+                        <span>📅 {v.data ? formatDate(v.data) : "—"}</span>
                         <span>👤 {v.lider}</span>
                         {v.telefone && <span>📱 {v.telefone}</span>}
                       </div>
@@ -1585,7 +1642,7 @@ function resp(data) {
                   { label: "Duração", value: viewing.duracao ? `${viewing.duracao} min` : null },
                   { label: "Visita virtual", value: viewing.visitaVirtual ? "Sim" : "Não" },
                 ] : []),
-                { label: "Data", value: viewing.data ? new Date(viewing.data + "T12:00:00").toLocaleDateString("pt-BR") : null },
+                { label: "Data", value: viewing.data ? formatDate(viewing.data) : null },
                 { label: "Líder responsável", value: viewing.lider },
                 { label: "Status", value: viewing.status },
                 { label: "Observações", value: viewing.observacoes },
