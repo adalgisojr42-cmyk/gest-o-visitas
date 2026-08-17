@@ -116,21 +116,326 @@ const formatDate = (raw) => {
     return String(raw);
   }
 };
+// Dados base das visitas (CSV importado) — nunca sobrescreve dados do usuário
+const SEED_DATA = [
+  {
+    "id": "1785268066860",
+    "nome": "Sergio e Cássia",
+    "telefone": "",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Outro",
+    "data": "2026-04-10",
+    "lider": "Pr João Francisco",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Breve devocional com cântico, leitura bíblica e oração."
+  },
+  {
+    "id": "1785434809972",
+    "nome": "Clayton Fasutijo",
+    "telefone": "61986386377",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Luto / Perda",
+    "data": "2026-07-16",
+    "lider": "Ev Adão",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Visita, e culto com a equipe de visitação"
+  },
+  {
+    "id": "1785435315035",
+    "nome": "Pr Elias Castro",
+    "telefone": "61999830257",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Enfermo / Doente",
+    "data": "2026-06-11",
+    "lider": "Ev Adão",
+    "status": "Agendada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Obs: Visita acompanhada com Miss Marina e Pr Gedeão Silva."
+  },
+  {
+    "id": "1785436660999",
+    "nome": "João Viana e família",
+    "telefone": "",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Outro",
+    "data": "2026-04-15",
+    "lider": "Pr João e Miss Gilvanete",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Devocional com leitura bíblica, hinos e oração."
+  },
+  {
+    "id": "1785443739468",
+    "nome": "Maria da Conceição (Tita)",
+    "telefone": "61 999666397",
+    "ministerio": "Pastoral",
+    "modalidade": "Presencial",
+    "tipo": "Enfermo / Doente",
+    "data": "2026-07-30",
+    "lider": "Pr Lourival e Pra Noêmia",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Visita realizada no hospital."
+  },
+  {
+    "id": "1785444248920",
+    "nome": "Pb Ângelo Sousa",
+    "telefone": "",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Outro",
+    "data": "2026-07-30",
+    "lider": "Pr João e Miss Gilvanete",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Devocional com hinos da harpa, leitura bíblica e oração."
+  },
+  {
+    "id": "1785444896735",
+    "nome": "Gustavo Alarcão (baterista)",
+    "telefone": "61 99379-9676",
+    "ministerio": "Ads Music",
+    "modalidade": "Presencial",
+    "tipo": "",
+    "data": "2026-07-18",
+    "lider": "Pr Júnior Reis",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Momento de encorajamento e convite para estar no culto dia 19/07 Dom.\nEle compareceu ao culto matutino e tivemos um tempo juntos presencialmente."
+  },
+  {
+    "id": "1785445193387",
+    "nome": "Lourrane",
+    "telefone": "61 99116-3928",
+    "ministerio": "Ads Music",
+    "modalidade": "Presencial",
+    "tipo": "",
+    "data": "2026-07-18",
+    "lider": "Pr Júnior",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Momento de encorajamento e convite para estar no culto dia 19/07 Dom.\nEla compareceu ao culto matutino e tivemos um tempo juntos presencialmente."
+  },
+  {
+    "id": "1785580411649",
+    "nome": "Pr Gedeão Silva",
+    "telefone": "61982422063",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Enfermo / Doente",
+    "data": "2026-03-27",
+    "lider": "Ev Adão",
+    "status": "Agendada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Fizemos o devocional, Lemos o Salmo 23, louvemos 03 hinos da harpa\nVisita feita por mim e a Miss Marina."
+  },
+  {
+    "id": "1785580881281",
+    "nome": "Diac Marcelo",
+    "telefone": "61998150143",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Outro",
+    "data": "2026-04-21",
+    "lider": "Ev Adão",
+    "status": "Agendada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Culto  em ação de graça, pela benção recebida da esposa efetivação contrato definitivo secretaria de ensino \nEste culto participaram Ministério Sênior e equipe da visitação"
+  },
+  {
+    "id": "1785581271052",
+    "nome": "Pr João Figueiredo",
+    "telefone": "61983193190",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Enfermo / Doente",
+    "data": "2026-01-09",
+    "lider": "Ev Adão",
+    "status": "Agendada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Visita pós cirurgia, lemos salmo 100 e entoamos 03 hinos de gratidão a Deus. \nVisita acompanha com Mis Marina"
+  },
+  {
+    "id": "1785581716905",
+    "nome": "Diac Fernando",
+    "telefone": "61981325634",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "",
+    "data": "2026-07-02",
+    "lider": "Ev Adão",
+    "status": "Não atendido",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Sugiro que o Ministro Diaconal faça também uma ligação, para marcar uma visita."
+  },
+  {
+    "id": "1785593129935",
+    "nome": "Ir Rodrigo",
+    "telefone": "61992461568",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "",
+    "data": "2026-07-05",
+    "lider": "Ev Adão",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Aconselhamento e reforço espiritual. \nSugiro que o Ministro de Casais faça uma ligação O Rodrigo é casado e tem uma criança."
+  },
+  {
+    "id": "1785936848040",
+    "nome": "Pr José Paulino",
+    "telefone": "61985406129",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Outro",
+    "data": "2026-02-24",
+    "lider": "Ev Adão",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Visita feita com Pastor Patriarca Adalgiso e Esposa Pra Francisca,\nLemos a Palavra e entoamos 03 Hinos;\nPastor Adalgiso  explanou experiência vivida  com companheiro de Ministério dando vários testemunho no campo de missões na Bahia e no Goiás, onde na sua palavra expressou a necessidade de escrever um livro relatando as experiência que teve com o companheiro no seu Ministério;"
+  },
+  {
+    "id": "1785937300740",
+    "nome": "Diac Eliseu",
+    "telefone": "61999510144",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Luto / Perda",
+    "data": "2026-03-30",
+    "lider": "Ev Adão",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "no devocional Lemos o Salmo 23 e entoamos 03 hinos, trouxemos uma palavra de encorajamento para vencermos o dia dia na nossa jornada proposta enquanto estivermos aqui nessa esfera terrena.\nobs: esta visita foi feita e acompanhada pelo Pb Ir David"
+  },
+  {
+    "id": "1785939849912",
+    "nome": "Pr Adalgiso",
+    "telefone": "61996561648",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Enfermo / Doente",
+    "data": "2026-04-29",
+    "lider": "Ev Adão",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Visita feita individualmente, lemos o salmo 100, e louvemos 02 hinos"
+  },
+  {
+    "id": "1786138813971",
+    "nome": "Ir Júlia Portugal",
+    "telefone": "61993163608",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "Enfermo / Doente",
+    "data": "2026-08-07",
+    "lider": "Ev Adão",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "A Irmã está em fase de recuperação, muita animada e alegre com o cuidado de Deus no novo processo que está passando. \nVisita acompanhada com a Miss Marina"
+  },
+  {
+    "id": "1786553279294",
+    "nome": "Luis Portugal",
+    "telefone": "61991159394",
+    "ministerio": "Visitação",
+    "modalidade": "Presencial",
+    "tipo": "",
+    "data": "2026-08-12",
+    "lider": "Ev Adão",
+    "status": "Realizada",
+    "visitaVirtual": false,
+    "resultadoLigacao": "",
+    "duracao": "",
+    "observacoes": "Palavra de ânimo, Afastamento da congregação a mais de 30 dias \nSugestão: que os Ministerios Casais e homens retorne a ligação."
+  }
+];
+
 const loadLocal = () => {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    // Preserva TODOS os campos originais — apenas preenche campos NOVOS
-    // que ainda não existiam em registros antigos, sem sobrescrever nada
-    return raw.map((v) => ({
-      ...v, // preserva tudo que já existe no registro
-      id: v.id || Date.now().toString(),
-      modalidade: v.modalidade || "Presencial",
-      visitaVirtual: v.visitaVirtual || false,
-      resultadoLigacao: v.resultadoLigacao !== undefined ? v.resultadoLigacao : "",
-      duracao: v.duracao !== undefined ? v.duracao : "",
-    }));
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+
+    // Se já há dados no localStorage, mescla com seed para recuperar campos faltantes
+    if (raw && raw.length > 0) {
+      const localMap = Object.fromEntries(raw.map(v => [v.id, v]));
+      const seedMap = Object.fromEntries(SEED_DATA.map(v => [v.id, v]));
+
+      // Todos os IDs únicos entre local e seed
+      const allIds = [...new Set([...Object.keys(localMap), ...Object.keys(seedMap)])];
+
+      return allIds.map(id => {
+        const local = localMap[id];
+        const seed = seedMap[id];
+        if (local && seed) {
+          // Registro existe nos dois: mantém local mas recupera data do seed se local estiver vazia
+          return {
+            ...seed,   // base do seed
+            ...local,  // local sobrescreve tudo
+            data: (local.data && local.data !== "" && local.data !== "Invalid Date") ? local.data : seed.data,
+            modalidade: local.modalidade || seed.modalidade || "Presencial",
+            visitaVirtual: local.visitaVirtual || false,
+            resultadoLigacao: local.resultadoLigacao !== undefined ? local.resultadoLigacao : "",
+            duracao: local.duracao !== undefined ? local.duracao : "",
+          };
+        }
+        if (local) {
+          // Só no local (registros novos criados pelo usuário)
+          return {
+            ...local,
+            modalidade: local.modalidade || "Presencial",
+            visitaVirtual: local.visitaVirtual || false,
+            resultadoLigacao: local.resultadoLigacao !== undefined ? local.resultadoLigacao : "",
+            duracao: local.duracao !== undefined ? local.duracao : "",
+          };
+        }
+        // Só no seed (novos registros do CSV não presentes no local)
+        return seed;
+      }).sort((a, b) => (b.id > a.id ? 1 : -1));
+    }
+
+    // localStorage vazio: usa seed como ponto de partida
+    return [...SEED_DATA];
   } catch {
-    return [];
+    return [...SEED_DATA];
   }
 };
 const saveLocal = (data) => {
