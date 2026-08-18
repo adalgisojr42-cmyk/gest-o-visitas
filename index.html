@@ -406,19 +406,40 @@ const loadLocal = () => {
         const local = localMap[id];
         const seed = seedMap[id];
         if (local && seed) {
-          // Registro existe nos dois: mantém local mas recupera data do seed se local estiver vazia
+          // Registro existe nos dois.
+          // Regra: seed tem prioridade nos campos que o app antigo gravou com valor padrão incorreto.
+          // Apenas campos que o usuário editou INTENCIONALMENTE no app novo prevalecem.
+
+          // Status: usa seed se o local vier como "Agendada" padrão mas seed diz diferente
+          // (o app antigo gravava "Agendada" como default sem o usuário escolher)
+          const STATUS_VALIDOS = ["Realizada", "Não atendido", "Cancelada"];
+          const statusFinal = STATUS_VALIDOS.includes(seed.status)
+            ? seed.status  // seed tem status significativo: usa seed
+            : (local.status || seed.status || "Agendada"); // senão, confia no local
+
+          // Modalidade: usa seed sempre que local estiver vazio ou indefinido
+          const modalidadeFinal = (local.modalidade && local.modalidade !== "")
+            ? local.modalidade
+            : (seed.modalidade || "Presencial");
+
+          // Data: usa local se válida, senão seed
+          const dataFinal = (local.data && local.data !== "" && local.data !== "Invalid Date")
+            ? local.data
+            : seed.data;
+
           return {
-            ...seed,   // base do seed
-            ...local,  // local sobrescreve tudo
-            data: (local.data && local.data !== "" && local.data !== "Invalid Date") ? local.data : seed.data,
-            modalidade: local.modalidade || seed.modalidade || "Presencial",
+            ...seed,            // base completa do seed (garante todos os campos)
+            ...local,           // local sobrescreve campos editados pelo usuário
+            data: dataFinal,
+            status: statusFinal,
+            modalidade: modalidadeFinal,
             visitaVirtual: local.visitaVirtual || false,
             resultadoLigacao: local.resultadoLigacao !== undefined ? local.resultadoLigacao : "",
             duracao: local.duracao !== undefined ? local.duracao : "",
           };
         }
         if (local) {
-          // Só no local (registros novos criados pelo usuário)
+          // Só no local (registros novos criados pelo usuário — preserva tudo)
           return {
             ...local,
             modalidade: local.modalidade || "Presencial",
