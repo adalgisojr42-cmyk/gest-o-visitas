@@ -467,12 +467,10 @@ const saveLocal = (data) => {
 // GOOGLE SHEETS API
 // ============================================================
 const sheetsAPI = {
-  // Monta a URL com todos os parâmetros
   buildUrl(params) {
     return `${SHEET_URL}?${new URLSearchParams(params)}`;
   },
 
-  // Campos de uma visita para envio
   campos(visita) {
     return {
       id: String(visita.id || ""),
@@ -491,7 +489,6 @@ const sheetsAPI = {
     };
   },
 
-  // Lê todos os registros do Sheets
   async getAll() {
     if (!SHEET_URL) return null;
     try {
@@ -502,32 +499,30 @@ const sheetsAPI = {
     } catch { return null; }
   },
 
-  // Envia via imagem — técnica que funciona sem CORS e sem bloqueio de iframe
-  // O Sheets grava mesmo sem retornar resposta legível
-  send(params) {
-    return new Promise((resolve) => {
-      const url = this.buildUrl(params);
-      const img = new Image();
-      img.onload = img.onerror = () => resolve({ ok: true });
-      img.src = url;
-      // Garante resolução mesmo sem resposta
-      setTimeout(() => resolve({ ok: true }), 5000);
-    });
+  // Envia via fetch no-cors — chega ao Sheets sem precisar ler a resposta
+  async send(params) {
+    if (!SHEET_URL) return;
+    const url = this.buildUrl(params);
+    try {
+      await fetch(url, { method: "GET", mode: "no-cors" });
+    } catch(e) {
+      console.warn("Sheets send error:", e);
+    }
   },
 
   async add(visita) {
     if (!SHEET_URL) return;
-    return this.send({ action: "add", ...this.campos(visita) });
+    await this.send({ action: "add", ...this.campos(visita) });
   },
 
   async update(visita) {
     if (!SHEET_URL) return;
-    return this.send({ action: "update", ...this.campos(visita) });
+    await this.send({ action: "update", ...this.campos(visita) });
   },
 
   async delete(id) {
     if (!SHEET_URL) return;
-    return this.send({ action: "delete", id: String(id) });
+    await this.send({ action: "delete", id: String(id) });
   },
 };
 
@@ -1037,8 +1032,7 @@ function App() {
     const seedMap = Object.fromEntries(SEED_DATA.map(s => [String(s.id), s]));
     const seed = seedMap[String(v.id)] || {};
     return {
-      ...seed,
-      ...v,
+      ...seed, ...v,
       id: String(v.id || ""),
       data: (v.data && v.data !== "" && v.data !== "Invalid Date") ? String(v.data) : (seed.data || ""),
       modalidade: (v.modalidade && v.modalidade !== "") ? v.modalidade : (seed.modalidade || "Presencial"),
@@ -1050,13 +1044,23 @@ function App() {
     };
   };
 
+  const PENDING_KEY = "igreja_visitas_pendencias_v1";
+  const loadPending = () => { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || "{}"); } catch { return {}; } };
+  const savePending = (p) => localStorage.setItem(PENDING_KEY, JSON.stringify(p));
+
   carregarDados = async () => {
     setLoading(true);
     if (SHEET_URL) {
       try {
         const sheetsData = await sheetsAPI.getAll();
         if (sheetsData && Array.isArray(sheetsData) && sheetsData.length > 0) {
-          const merged = sheetsData.map(v => normalizarRegistro(v));
+          const pending = loadPending();
+          const sheetsMap = Object.fromEntries(sheetsData.map(v => [String(v.id), normalizarRegistro(v)]));
+          Object.values(pending).forEach(p => {
+            if (p._acao === "delete") delete sheetsMap[p.id];
+            else sheetsMap[p.id] = p;
+          });
+          const merged = Object.values(sheetsMap).sort((a,b) => b.id > a.id ? 1 : -1);
           setVisitas(merged);
           saveLocal(merged);
           setLoading(false);
@@ -1070,31 +1074,28 @@ function App() {
     setLoading(false);
   };
 
-  // Refresh silencioso a cada 5 min — protege edições recentes por 3 min
   atualizarSilencioso = async () => {
     if (!SHEET_URL) return;
     try {
+      const pending = loadPending();
+      for (const [id, reg] of Object.entries(pending)) {
+        if (reg._acao === "delete") await sheetsAPI.delete(id);
+        else if (reg._acao === "add") await sheetsAPI.add(reg);
+        else await sheetsAPI.update(reg);
+      }
+      await new Promise(r => setTimeout(r, 3000));
       const sheetsData = await sheetsAPI.getAll();
       if (!sheetsData || !Array.isArray(sheetsData) || sheetsData.length === 0) return;
-      const agora = Date.now();
-      const PROTECAO = 3 * 60 * 1000;
-
-      setVisitas(prev => {
-        const localMap = Object.fromEntries(prev.map(v => [String(v.id), v]));
-        const sheetsMap = Object.fromEntries(sheetsData.map(v => [String(v.id), normalizarRegistro(v)]));
-        const todosIds = [...new Set([...Object.keys(sheetsMap), ...Object.keys(localMap)])];
-        const resultado = todosIds.map(id => {
-          const sheet = sheetsMap[id];
-          const local = localMap[id];
-          if (!local) return sheet;
-          if (!sheet) return local;
-          // Protege se editado localmente há menos de 3 minutos
-          if (local._editadoEm && (agora - local._editadoEm) < PROTECAO) return local;
-          return sheet;
-        });
-        saveLocal(resultado);
-        return resultado;
+      const sheetsMap = Object.fromEntries(sheetsData.map(v => [String(v.id), normalizarRegistro(v)]));
+      const pendingAtual = loadPending();
+      Object.values(pendingAtual).forEach(p => {
+        if (p._acao === "delete") delete sheetsMap[p.id];
+        else sheetsMap[p.id] = p;
       });
+      const resultado = Object.values(sheetsMap).sort((a,b) => b.id > a.id ? 1 : -1);
+      setVisitas(resultado);
+      saveLocal(resultado);
+      savePending({});
     } catch(e) {
       console.warn("Erro no refresh:", e);
     }
@@ -1132,16 +1133,25 @@ function App() {
     setEditing(null);
     setSyncing(false);
 
-    // Tenta sincronizar com Google Sheets em segundo plano
+    // Registra pendência local (garante que o dado nunca se perde mesmo se o Sheets falhar)
     if (SHEET_URL) {
+      const pending = loadPending();
+      const reg = editing
+        ? { ...visitas.find(v => v.id === visita.id) || {}, ...visita, _acao: "update" }
+        : { ...visita, _acao: "add" };
+      pending[String(reg.id)] = reg;
+      savePending(pending);
+
+      // Envia ao Sheets em segundo plano
       try {
-        if (editing) {
-          await sheetsAPI.update(visita);
-        } else {
-          await sheetsAPI.add(visita);
-        }
+        if (editing) { await sheetsAPI.update(visita); }
+        else { await sheetsAPI.add(visita); }
+        // Confirmado: remove da fila de pendências
+        const p = loadPending();
+        delete p[String(visita.id)];
+        savePending(p);
       } catch (err) {
-        console.warn("Erro ao sincronizar com Sheets:", err);
+        console.warn("Sheets indisponível, ficará na fila:", err);
       }
     }
   };
@@ -1152,6 +1162,17 @@ function App() {
     setVisitas(updated);
     saveLocal(updated);
     setConfirmDelete(null);
+    // Registra pendência de exclusão
+    if (SHEET_URL) {
+      const pending = loadPending();
+      pending[String(id)] = { id: String(id), _acao: "delete" };
+      savePending(pending);
+      sheetsAPI.delete(id).then(() => {
+        const p = loadPending();
+        delete p[String(id)];
+        savePending(p);
+      }).catch(() => {});
+    }
   };
 
   // Filtros
