@@ -639,7 +639,7 @@ function VisitaForm({ onSave, onCancel, initial }) {
       alert("Selecione o Tipo de visita.");
       return;
     }
-    onSave({ ...form, id: form.id || Date.now().toString() });
+    onSave({ ...form, id: form.id || Date.now().toString(), _editadoEm: Date.now() });
   };
 
   const inputStyle = {
@@ -1033,28 +1033,30 @@ function App() {
   const [sheetConnected] = useState(!!SHEET_URL);
 
   // Carrega e mescla dados do Sheets com seed/local
-  const carregarDados = async () => {
+  const normalizarRegistro = (v) => {
+    const seedMap = Object.fromEntries(SEED_DATA.map(s => [String(s.id), s]));
+    const seed = seedMap[String(v.id)] || {};
+    return {
+      ...seed,
+      ...v,
+      id: String(v.id || ""),
+      data: (v.data && v.data !== "" && v.data !== "Invalid Date") ? String(v.data) : (seed.data || ""),
+      modalidade: (v.modalidade && v.modalidade !== "") ? v.modalidade : (seed.modalidade || "Presencial"),
+      status: (v.status && v.status !== "") ? v.status : (seed.status || "Agendada"),
+      visitaVirtual: v.visitaVirtual === "Sim" || v.visitaVirtual === true,
+      resultadoLigacao: v.resultadoLigacao || "",
+      duracao: v.duracao || "",
+      observacoes: v.observacoes || "",
+    };
+  };
+
+  carregarDados = async () => {
     setLoading(true);
     if (SHEET_URL) {
       try {
         const sheetsData = await sheetsAPI.getAll();
-        if (sheetsData && sheetsData.length > 0) {
-          // Mescla dados do Sheets com seed para recuperar campos faltantes
-          const seedMap = Object.fromEntries(SEED_DATA.map(v => [v.id, v]));
-          const merged = sheetsData.map(v => {
-            const seed = seedMap[v.id] || {};
-            return {
-              ...seed,
-              ...v,
-              id: String(v.id || ""),
-              data: (v.data && v.data !== "" && v.data !== "Invalid Date") ? v.data : (seed.data || ""),
-              modalidade: (v.modalidade && v.modalidade !== "") ? v.modalidade : (seed.modalidade || "Presencial"),
-              status: v.status || seed.status || "Agendada",
-              visitaVirtual: v.visitaVirtual === "Sim" || v.visitaVirtual === true,
-              resultadoLigacao: v.resultadoLigacao || "",
-              duracao: v.duracao || "",
-            };
-          });
+        if (sheetsData && Array.isArray(sheetsData) && sheetsData.length > 0) {
+          const merged = sheetsData.map(v => normalizarRegistro(v));
           setVisitas(merged);
           saveLocal(merged);
           setLoading(false);
@@ -1064,15 +1066,43 @@ function App() {
         console.warn("Erro ao buscar Sheets:", e);
       }
     }
-    // Fallback: usa dados locais/seed
     setVisitas(loadLocal());
     setLoading(false);
   };
 
+  // Refresh silencioso a cada 5 min — protege edições recentes por 3 min
+  atualizarSilencioso = async () => {
+    if (!SHEET_URL) return;
+    try {
+      const sheetsData = await sheetsAPI.getAll();
+      if (!sheetsData || !Array.isArray(sheetsData) || sheetsData.length === 0) return;
+      const agora = Date.now();
+      const PROTECAO = 3 * 60 * 1000;
+
+      setVisitas(prev => {
+        const localMap = Object.fromEntries(prev.map(v => [String(v.id), v]));
+        const sheetsMap = Object.fromEntries(sheetsData.map(v => [String(v.id), normalizarRegistro(v)]));
+        const todosIds = [...new Set([...Object.keys(sheetsMap), ...Object.keys(localMap)])];
+        const resultado = todosIds.map(id => {
+          const sheet = sheetsMap[id];
+          const local = localMap[id];
+          if (!local) return sheet;
+          if (!sheet) return local;
+          // Protege se editado localmente há menos de 3 minutos
+          if (local._editadoEm && (agora - local._editadoEm) < PROTECAO) return local;
+          return sheet;
+        });
+        saveLocal(resultado);
+        return resultado;
+      });
+    } catch(e) {
+      console.warn("Erro no refresh:", e);
+    }
+  };
+
   useEffect(() => {
     carregarDados();
-    // Atualiza automaticamente a cada 60 segundos para pegar alterações de outros líderes
-    const intervalo = setInterval(carregarDados, 60000);
+    const intervalo = setInterval(atualizarSilencioso, 5 * 60 * 1000);
     return () => clearInterval(intervalo);
   }, []);
 
@@ -1089,8 +1119,10 @@ function App() {
       if (!visita.nome && original.nome) merged.nome = original.nome;
       if (!visita.ministerio && original.ministerio) merged.ministerio = original.ministerio;
       if (!visita.lider && original.lider) merged.lider = original.lider;
+      merged._editadoEm = Date.now();
       updated = visitas.map((v) => (v.id === merged.id ? merged : v));
     } else {
+      visita._editadoEm = Date.now();
       updated = [visita, ...visitas];
     }
     // Salva localmente primeiro — garante que o botão sempre funciona
