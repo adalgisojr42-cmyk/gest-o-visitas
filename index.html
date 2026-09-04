@@ -499,14 +499,16 @@ const sheetsAPI = {
     } catch { return null; }
   },
 
-  // Envia via fetch no-cors — chega ao Sheets sem precisar ler a resposta
+  // Envia dados ao Sheets — usa no-cors (dados chegam mas resposta não é lida)
   async send(params) {
     if (!SHEET_URL) return;
     const url = this.buildUrl(params);
-    try {
-      await fetch(url, { method: "GET", mode: "no-cors" });
-    } catch(e) {
-      console.warn("Sheets send error:", e);
+    // Tenta 3 vezes para garantir entrega
+    for (let i = 0; i < 3; i++) {
+      try {
+        await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
+        await new Promise(r => setTimeout(r, 500));
+      } catch(e) {}
     }
   },
 
@@ -1904,33 +1906,18 @@ function doGet(e) {
 
   const ROW = (d) => [d.id,d.nome,d.telefone,d.ministerio,d.modalidade,d.tipo,d.data,d.lider,d.status,d.visitaVirtual,d.resultadoLigacao,d.duracao,d.observacoes];
 
-  if (action === "add") {
-    // Verifica se cabeçalho existe, se não cria
+  if (action === "add" || action === "update") {
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(HEADERS);
-    } else {
-      const firstRow = sheet.getRange(1, 1, 1, 1).getValue();
-      if (firstRow !== "id") sheet.insertRowBefore(1).getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    } else if (sheet.getRange(1,1).getValue() !== "id") {
+      sheet.insertRowBefore(1);
+      sheet.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
     }
-    // Evita duplicata: não adiciona se ID já existe
-    const ids = sheet.getRange("A:A").getValues().flat().map(String);
-    if (!ids.includes(d.id)) {
-      sheet.appendRow(ROW(d));
-    } else {
-      // Se já existe, atualiza
-      const row = ids.indexOf(d.id) + 1;
-      sheet.getRange(row, 1, 1, HEADERS.length).setValues([ROW(d)]);
-    }
-    return resp({ok: true});
-  }
-
-  if (action === "update") {
     const ids = sheet.getRange("A:A").getValues().flat().map(String);
     const row = ids.indexOf(d.id) + 1;
     if (row > 0) {
       sheet.getRange(row, 1, 1, HEADERS.length).setValues([ROW(d)]);
     } else {
-      // Se não encontrou, adiciona
       sheet.appendRow(ROW(d));
     }
     return resp({ok: true});
@@ -1944,6 +1931,10 @@ function doGet(e) {
   }
 
   return resp({error: "action not found: " + action});
+}
+
+function doPost(e) {
+  return doGet(e);
 }
 
 function resp(data) {
