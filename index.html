@@ -467,62 +467,67 @@ const saveLocal = (data) => {
 // GOOGLE SHEETS API
 // ============================================================
 const sheetsAPI = {
+  // Monta a URL com todos os parâmetros
+  buildUrl(params) {
+    return `${SHEET_URL}?${new URLSearchParams(params)}`;
+  },
+
+  // Campos de uma visita para envio
+  campos(visita) {
+    return {
+      id: String(visita.id || ""),
+      nome: visita.nome || "",
+      telefone: visita.telefone || "",
+      ministerio: visita.ministerio || "",
+      modalidade: visita.modalidade || "Presencial",
+      tipo: visita.tipo || "",
+      data: visita.data || "",
+      lider: visita.lider || "",
+      status: visita.status || "",
+      visitaVirtual: visita.visitaVirtual ? "Sim" : "Não",
+      resultadoLigacao: visita.resultadoLigacao || "",
+      duracao: visita.duracao || "",
+      observacoes: visita.observacoes || "",
+    };
+  },
+
+  // Lê todos os registros do Sheets
   async getAll() {
     if (!SHEET_URL) return null;
     try {
-      const r = await fetch(`${SHEET_URL}?action=getAll`);
+      const r = await fetch(this.buildUrl({ action: "getAll" }));
       if (!r.ok) return null;
-      return r.json();
+      const data = await r.json();
+      return Array.isArray(data) ? data : null;
     } catch { return null; }
   },
+
+  // Envia via imagem — técnica que funciona sem CORS e sem bloqueio de iframe
+  // O Sheets grava mesmo sem retornar resposta legível
   send(params) {
-    // Abre URL do Apps Script numa aba invisível — único método que funciona sem CORS
     return new Promise((resolve) => {
-      const url = `${SHEET_URL}?${new URLSearchParams(params)}`;
-      const win = window.open(url, "_blank", "width=1,height=1,left=-9999,top=-9999");
-      setTimeout(() => {
-        try { if (win) win.close(); } catch(e) {}
-        resolve({ ok: true });
-      }, 3000);
+      const url = this.buildUrl(params);
+      const img = new Image();
+      img.onload = img.onerror = () => resolve({ ok: true });
+      img.src = url;
+      // Garante resolução mesmo sem resposta
+      setTimeout(() => resolve({ ok: true }), 5000);
     });
   },
+
   async add(visita) {
-    if (!SHEET_URL) return null;
-    return this.send({
-      action: "add",
-      id: visita.id,
-      nome: visita.nome || "",
-      telefone: visita.telefone || "",
-      ministerio: visita.ministerio || "",
-      modalidade: visita.modalidade || "Presencial",
-      tipo: visita.tipo || "",
-      data: visita.data || "",
-      lider: visita.lider || "",
-      status: visita.status || "",
-      visitaVirtual: visita.visitaVirtual ? "Sim" : "Não",
-      resultadoLigacao: visita.resultadoLigacao || "",
-      duracao: visita.duracao || "",
-      observacoes: visita.observacoes || "",
-    });
+    if (!SHEET_URL) return;
+    return this.send({ action: "add", ...this.campos(visita) });
   },
+
   async update(visita) {
-    if (!SHEET_URL) return null;
-    return this.send({
-      action: "update",
-      id: visita.id,
-      nome: visita.nome || "",
-      telefone: visita.telefone || "",
-      ministerio: visita.ministerio || "",
-      modalidade: visita.modalidade || "Presencial",
-      tipo: visita.tipo || "",
-      data: visita.data || "",
-      lider: visita.lider || "",
-      status: visita.status || "",
-      visitaVirtual: visita.visitaVirtual ? "Sim" : "Não",
-      resultadoLigacao: visita.resultadoLigacao || "",
-      duracao: visita.duracao || "",
-      observacoes: visita.observacoes || "",
-    });
+    if (!SHEET_URL) return;
+    return this.send({ action: "update", ...this.campos(visita) });
+  },
+
+  async delete(id) {
+    if (!SHEET_URL) return;
+    return this.send({ action: "delete", id: String(id) });
   },
 };
 
@@ -1027,28 +1032,48 @@ function App() {
   const [dashFim, setDashFim] = useState("");
   const [sheetConnected] = useState(!!SHEET_URL);
 
-  // Carregar dados
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      if (SHEET_URL) {
-        try {
-          const data = await sheetsAPI.getAll();
-          if (data) {
-            setVisitas(data);
-            saveLocal(data);
-          } else {
-            setVisitas(loadLocal());
-          }
-        } catch {
-          setVisitas(loadLocal());
+  // Carrega e mescla dados do Sheets com seed/local
+  const carregarDados = async () => {
+    setLoading(true);
+    if (SHEET_URL) {
+      try {
+        const sheetsData = await sheetsAPI.getAll();
+        if (sheetsData && sheetsData.length > 0) {
+          // Mescla dados do Sheets com seed para recuperar campos faltantes
+          const seedMap = Object.fromEntries(SEED_DATA.map(v => [v.id, v]));
+          const merged = sheetsData.map(v => {
+            const seed = seedMap[v.id] || {};
+            return {
+              ...seed,
+              ...v,
+              id: String(v.id || ""),
+              data: (v.data && v.data !== "" && v.data !== "Invalid Date") ? v.data : (seed.data || ""),
+              modalidade: (v.modalidade && v.modalidade !== "") ? v.modalidade : (seed.modalidade || "Presencial"),
+              status: v.status || seed.status || "Agendada",
+              visitaVirtual: v.visitaVirtual === "Sim" || v.visitaVirtual === true,
+              resultadoLigacao: v.resultadoLigacao || "",
+              duracao: v.duracao || "",
+            };
+          });
+          setVisitas(merged);
+          saveLocal(merged);
+          setLoading(false);
+          return;
         }
-      } else {
-        setVisitas(loadLocal());
+      } catch(e) {
+        console.warn("Erro ao buscar Sheets:", e);
       }
-      setLoading(false);
-    };
-    load();
+    }
+    // Fallback: usa dados locais/seed
+    setVisitas(loadLocal());
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    carregarDados();
+    // Atualiza automaticamente a cada 60 segundos para pegar alterações de outros líderes
+    const intervalo = setInterval(carregarDados, 60000);
+    return () => clearInterval(intervalo);
   }, []);
 
   // Salvar visita
@@ -1789,9 +1814,11 @@ function App() {
                 n: "3",
                 title: "Cole o script",
                 desc: "Apague o conteúdo do editor e cole o script abaixo:",
-                code: `function doGet(e) {
+                code: `const HEADERS = ["id","nome","telefone","ministerio","modalidade","tipo","data","lider","status","visitaVirtual","resultadoLigacao","duracao","observacoes"];
+
+function doGet(e) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Visitas");
-  const action = e.parameter.action || "getAll";
+  const action = (e.parameter.action || "getAll").trim();
 
   if (action === "getAll") {
     const data = sheet.getDataRange().getValues();
@@ -1807,7 +1834,7 @@ function App() {
 
   const p = e.parameter;
   const d = {
-    id: p.id,
+    id: String(p.id || "").trim(),
     nome: p.nome || "",
     telefone: p.telefone || "",
     ministerio: p.ministerio || "",
@@ -1822,33 +1849,54 @@ function App() {
     observacoes: p.observacoes || ""
   };
 
-  const HEADERS = ["id","nome","telefone","ministerio","modalidade","tipo","data","lider","status","visitaVirtual","resultadoLigacao","duracao","observacoes"];
   const ROW = (d) => [d.id,d.nome,d.telefone,d.ministerio,d.modalidade,d.tipo,d.data,d.lider,d.status,d.visitaVirtual,d.resultadoLigacao,d.duracao,d.observacoes];
 
   if (action === "add") {
+    // Verifica se cabeçalho existe, se não cria
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(HEADERS);
+    } else {
+      const firstRow = sheet.getRange(1, 1, 1, 1).getValue();
+      if (firstRow !== "id") sheet.insertRowBefore(1).getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
     }
-    sheet.appendRow(ROW(d));
-    return resp({ok: true});
-  }
-
-  if (action === "update") {
-    const ids = sheet.getRange("A:A").getValues().flat();
-    const row = ids.indexOf(d.id) + 1;
-    if (row > 0) {
+    // Evita duplicata: não adiciona se ID já existe
+    const ids = sheet.getRange("A:A").getValues().flat().map(String);
+    if (!ids.includes(d.id)) {
+      sheet.appendRow(ROW(d));
+    } else {
+      // Se já existe, atualiza
+      const row = ids.indexOf(d.id) + 1;
       sheet.getRange(row, 1, 1, HEADERS.length).setValues([ROW(d)]);
     }
     return resp({ok: true});
   }
 
-  return resp({error: "action not found"});
+  if (action === "update") {
+    const ids = sheet.getRange("A:A").getValues().flat().map(String);
+    const row = ids.indexOf(d.id) + 1;
+    if (row > 0) {
+      sheet.getRange(row, 1, 1, HEADERS.length).setValues([ROW(d)]);
+    } else {
+      // Se não encontrou, adiciona
+      sheet.appendRow(ROW(d));
+    }
+    return resp({ok: true});
+  }
+
+  if (action === "delete") {
+    const ids = sheet.getRange("A:A").getValues().flat().map(String);
+    const row = ids.indexOf(d.id) + 1;
+    if (row > 0) sheet.deleteRow(row);
+    return resp({ok: true});
+  }
+
+  return resp({error: "action not found: " + action});
 }
 
 function resp(data) {
-  const output = ContentService.createTextOutput(JSON.stringify(data))
+  return ContentService
+    .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
-  return output;
 }`,
               },
               {
