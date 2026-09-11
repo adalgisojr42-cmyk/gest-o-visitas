@@ -503,17 +503,13 @@ const sheetsAPI = {
     } catch { return null; }
   },
 
-  // Envia dados ao Sheets — usa no-cors (dados chegam mas resposta não é lida)
+  // Envia dados ao Sheets — UMA única vez, no-cors
   async send(params) {
     if (!SHEET_URL) return;
     const url = this.buildUrl(params);
-    // Tenta 3 vezes para garantir entrega
-    for (let i = 0; i < 3; i++) {
-      try {
-        await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
-        await new Promise(r => setTimeout(r, 500));
-      } catch(e) {}
-    }
+    try {
+      await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
+    } catch(e) {}
   },
 
   async add(visita) {
@@ -612,22 +608,52 @@ function StatCard({ label, value, color, icon }) {
 // ============================================================
 function VisitaForm({ onSave, onCancel, initial }) {
   const hoje = new Date().toISOString().split("T")[0];
-  const [form, setForm] = useState(
-    initial || {
-      nome: "",
-      telefone: "",
-      ministerio: "",
-      modalidade: "Presencial",
-      tipo: "",
-      data: hoje,
-      lider: "",
-      status: "Agendada",
-      visitaVirtual: false,
-      resultadoLigacao: "",
-      duracao: "",
-      observacoes: "",
+
+  // Normaliza data para YYYY-MM-DD (formato exigido pelo input type=date)
+  const normData = (raw) => {
+    if (!raw) return hoje;
+    const s = String(raw).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+      const [d, m, y] = s.split("/");
+      return `${y}-${m}-${d}`;
     }
-  );
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replace(/\//g, "-");
+    if (!isNaN(Number(s)) && Number(s) > 40000) {
+      const dt = new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
+      return dt.toISOString().split("T")[0];
+    }
+    try {
+      const dt = new Date(s);
+      if (!isNaN(dt.getTime())) return dt.toISOString().split("T")[0];
+    } catch {}
+    return hoje;
+  };
+
+  const initialData = initial ? {
+    ...initial,
+    data: normData(initial.data),
+    modalidade: initial.modalidade || "Presencial",
+    status: initial.status || "Agendada",
+    visitaVirtual: initial.visitaVirtual === true || initial.visitaVirtual === "Sim",
+    resultadoLigacao: initial.resultadoLigacao || "",
+    duracao: initial.duracao || "",
+  } : {
+    nome: "",
+    telefone: "",
+    ministerio: "",
+    modalidade: "Presencial",
+    tipo: "",
+    data: hoje,
+    lider: "",
+    status: "Agendada",
+    visitaVirtual: false,
+    resultadoLigacao: "",
+    duracao: "",
+    observacoes: "",
+  };
+
+  const [form, setForm] = useState(initialData);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -1085,7 +1111,9 @@ function App() {
     setLoading(false);
   };
 
-  // Refresh silencioso — só busca registros NOVOS de outros usuários
+  // Refresh silencioso a cada 5 min
+  // Regra simples: local é sempre preservado. Apenas adiciona registros
+  // que vieram de OUTROS usuários e ainda não existem no local.
   const atualizarSilencioso = async () => {
     if (!SHEET_URL) return;
     try {
@@ -1093,26 +1121,27 @@ function App() {
       if (!sheetsData || !Array.isArray(sheetsData) || sheetsData.length === 0) return;
 
       setVisitas(prev => {
+        // Mapa do estado local atual (fonte da verdade)
         const localMap = Object.fromEntries(prev.map(v => [String(v.id), v]));
         let houveMudanca = false;
 
-        sheetsData.forEach(v => {
-          const id = String(v.id);
+        sheetsData.forEach(raw => {
+          const id = String(raw.id);
           if (!localMap[id]) {
-            // Registro novo de outro usuário — adiciona sem tocar nos existentes
-            localMap[id] = normalizarRegistro(v);
+            // Registro novo de outro usuário — adiciona
+            localMap[id] = normalizarRegistro(raw);
             houveMudanca = true;
           }
-          // Registros existentes: NUNCA sobrescreve
+          // Registro já existe no local → NÃO toca, independente do que veio do Sheets
         });
 
-        if (!houveMudanca) return prev;
-        const resultado = Object.values(localMap).sort((a, b) => b.id > a.id ? 1 : -1);
+        if (!houveMudanca) return prev; // sem mudança, evita re-render desnecessário
+        const resultado = Object.values(localMap).sort((a, b) => String(b.id) > String(a.id) ? 1 : -1);
         saveLocal(resultado);
         return resultado;
       });
     } catch(e) {
-      console.warn("Erro no refresh:", e);
+      console.warn("Erro no refresh silencioso:", e);
     }
   };
 
@@ -1125,34 +1154,41 @@ function App() {
   // Salvar visita
   const handleSave = async (visita) => {
     setSyncing(true);
-    let updated;
+    let registroFinal;
+
     if (editing) {
-      // Mescla com o registro original para nunca perder campos já salvos
       const original = visitas.find((v) => v.id === visita.id) || {};
-      const merged = { ...original, ...visita };
-      // Garante que campos críticos não sejam sobrescritos por valores vazios
-      if (!visita.data && original.data) merged.data = original.data;
-      if (!visita.nome && original.nome) merged.nome = original.nome;
-      if (!visita.ministerio && original.ministerio) merged.ministerio = original.ministerio;
-      if (!visita.lider && original.lider) merged.lider = original.lider;
-      merged._editadoEm = Date.now();
-      updated = visitas.map((v) => (v.id === merged.id ? merged : v));
+      registroFinal = {
+        ...original,
+        ...visita,
+        // garante que campos preenchidos originalmente nunca sejam perdidos
+        data: visita.data || original.data || "",
+        nome: visita.nome || original.nome || "",
+        ministerio: visita.ministerio || original.ministerio || "",
+        lider: visita.lider || original.lider || "",
+        modalidade: visita.modalidade || original.modalidade || "Presencial",
+        status: visita.status || original.status || "Agendada",
+        _editadoEm: Date.now(),
+      };
+      const updated = visitas.map((v) => (v.id === registroFinal.id ? registroFinal : v));
+      setVisitas(updated);
+      saveLocal(updated);
     } else {
-      visita._editadoEm = Date.now();
-      updated = [visita, ...visitas];
+      registroFinal = { ...visita, _editadoEm: Date.now() };
+      const updated = [registroFinal, ...visitas];
+      setVisitas(updated);
+      saveLocal(updated);
     }
-    // Salva localmente primeiro — garante que o botão sempre funciona
-    setVisitas(updated);
-    saveLocal(updated);
+
     setShowForm(false);
     setEditing(null);
     setSyncing(false);
 
-    // Envia ao Sheets em segundo plano (best-effort — local já está salvo e seguro)
+    // Envia ao Sheets em segundo plano — UMA vez
     if (SHEET_URL) {
       try {
-        if (editing) { sheetsAPI.update(visita); }
-        else { sheetsAPI.add(visita); }
+        if (editing) { await sheetsAPI.update(registroFinal); }
+        else { await sheetsAPI.add(registroFinal); }
       } catch (err) {}
     }
   };
