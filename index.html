@@ -31,7 +31,7 @@
 // 2. Vá em Extensões > Apps Script
 // 3. Cole o script de deploy (ver instruções no rodapé do app)
 // 4. Publique como Web App e cole a URL abaixo
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbyvi1KHTgZMQipwHfunpagXU_XPvH0ip-p9GC7YNeBqN7A9o7cJQK-6LniIlXMU4B1E/exec";
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbx_9i0ykI4Gd_0SNUmr8nyVi-AP4Uk5arB50OrHIl-RYeSgLyiXHCwvOI9TiGPgkJY0/exec";
 
 const MINISTERIOS = [
   "Ads Music",
@@ -484,7 +484,6 @@ const sheetsAPI = {
   },
 
   campos(visita) {
-    // Limpa campos internos antes de enviar ao Sheets
     const v = { ...visita };
     delete v._editadoEm;
     delete v._acao;
@@ -508,35 +507,47 @@ const sheetsAPI = {
   async getAll() {
     if (!SHEET_URL) return null;
     try {
-      const r = await fetch(this.buildUrl({ action: "getAll" }));
+      const r = await fetch(this.buildUrl({ action: "getAll" }), { cache: "no-store" });
       if (!r.ok) return null;
       const data = await r.json();
       return Array.isArray(data) ? data : null;
     } catch { return null; }
   },
 
-  // Envia dados ao Sheets — UMA única vez, no-cors
+  // Envia ao Sheets — tenta fetch normal primeiro (lê resposta)
+  // Se falhar por CORS, usa no-cors como fallback
   async send(params) {
-    if (!SHEET_URL) return;
+    if (!SHEET_URL) return { ok: false };
     const url = this.buildUrl(params);
+    // Tentativa 1: fetch normal — conseguimos ler a resposta e confirmar gravação
     try {
-      await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
-    } catch(e) {}
+      const r = await fetch(url, { method: "GET", cache: "no-store" });
+      if (r.ok) {
+        const json = await r.json();
+        return json;
+      }
+    } catch(e) {
+      // CORS bloqueou — usa no-cors como fallback silencioso
+      try {
+        await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
+      } catch(e2) {}
+    }
+    return { ok: true };
   },
 
   async add(visita) {
     if (!SHEET_URL) return;
-    await this.send({ action: "add", ...this.campos(visita) });
+    return this.send({ action: "add", ...this.campos(visita) });
   },
 
   async update(visita) {
     if (!SHEET_URL) return;
-    await this.send({ action: "update", ...this.campos(visita) });
+    return this.send({ action: "update", ...this.campos(visita) });
   },
 
   async delete(id) {
     if (!SHEET_URL) return;
-    await this.send({ action: "delete", id: String(id) });
+    return this.send({ action: "delete", id: String(id) });
   },
 };
 
@@ -1914,76 +1925,101 @@ function App() {
                 desc: "Apague o conteúdo do editor e cole o script abaixo:",
                 code: `const HEADERS = ["id","nome","telefone","ministerio","modalidade","tipo","data","lider","status","visitaVirtual","resultadoLigacao","duracao","observacoes"];
 
-function doGet(e) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Visitas");
-  const action = (e.parameter.action || "getAll").trim();
+function getSheet() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Visitas");
+}
+
+function garantirCabecalho(sheet) {
+  if (sheet.getLastRow() === 0 || sheet.getRange(1,1).getValue() !== "id") {
+    sheet.insertRowBefore(1);
+    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+  }
+}
+
+function toRow(d) {
+  return [d.id,d.nome,d.telefone,d.ministerio,d.modalidade,d.tipo,d.data,d.lider,d.status,d.visitaVirtual,d.resultadoLigacao,d.duracao,d.observacoes];
+}
+
+function processAction(params) {
+  const sheet = getSheet();
+  const action = (params.action || "getAll").trim();
 
   if (action === "getAll") {
     const data = sheet.getDataRange().getValues();
-    if (data.length < 2) return resp([]);
+    if (data.length < 2) return [];
     const headers = data[0];
-    const rows = data.slice(1).map(row => {
+    return data.slice(1).map(row => {
       const obj = {};
       headers.forEach((h, i) => obj[h] = row[i]);
       return obj;
     });
-    return resp(rows);
   }
 
-  const p = e.parameter;
   const d = {
-    id: String(p.id || "").trim(),
-    nome: p.nome || "",
-    telefone: p.telefone || "",
-    ministerio: p.ministerio || "",
-    modalidade: p.modalidade || "Presencial",
-    tipo: p.tipo || "",
-    data: p.data || "",
-    lider: p.lider || "",
-    status: p.status || "",
-    visitaVirtual: p.visitaVirtual || "Não",
-    resultadoLigacao: p.resultadoLigacao || "",
-    duracao: p.duracao || "",
-    observacoes: p.observacoes || ""
+    id: String(params.id || "").trim(),
+    nome: params.nome || "",
+    telefone: params.telefone || "",
+    ministerio: params.ministerio || "",
+    modalidade: params.modalidade || "Presencial",
+    tipo: params.tipo || "",
+    data: params.data || "",
+    lider: params.lider || "",
+    status: params.status || "",
+    visitaVirtual: params.visitaVirtual || "Não",
+    resultadoLigacao: params.resultadoLigacao || "",
+    duracao: params.duracao || "",
+    observacoes: params.observacoes || ""
   };
 
-  const ROW = (d) => [d.id,d.nome,d.telefone,d.ministerio,d.modalidade,d.tipo,d.data,d.lider,d.status,d.visitaVirtual,d.resultadoLigacao,d.duracao,d.observacoes];
-
   if (action === "add" || action === "update") {
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(HEADERS);
-    } else if (sheet.getRange(1,1).getValue() !== "id") {
-      sheet.insertRowBefore(1);
-      sheet.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
-    }
+    garantirCabecalho(sheet);
     const ids = sheet.getRange("A:A").getValues().flat().map(String);
     const row = ids.indexOf(d.id) + 1;
-    if (row > 0) {
-      sheet.getRange(row, 1, 1, HEADERS.length).setValues([ROW(d)]);
+    if (row > 1) {
+      sheet.getRange(row, 1, 1, HEADERS.length).setValues([toRow(d)]);
     } else {
-      sheet.appendRow(ROW(d));
+      sheet.appendRow(toRow(d));
     }
-    return resp({ok: true});
+    return {ok: true};
   }
 
   if (action === "delete") {
     const ids = sheet.getRange("A:A").getValues().flat().map(String);
     const row = ids.indexOf(d.id) + 1;
-    if (row > 0) sheet.deleteRow(row);
-    return resp({ok: true});
+    if (row > 1) sheet.deleteRow(row);
+    return {ok: true};
   }
 
-  return resp({error: "action not found: " + action});
+  return {error: "action not found: " + action};
+}
+
+// Resposta com headers CORS — permite fetch normal do navegador
+function makeResponse(data) {
+  const output = ContentService.createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+  return output;
+}
+
+function doGet(e) {
+  try {
+    const result = processAction(e.parameter);
+    return makeResponse(result);
+  } catch(err) {
+    return makeResponse({error: err.toString()});
+  }
 }
 
 function doPost(e) {
-  return doGet(e);
-}
-
-function resp(data) {
-  return ContentService
-    .createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
+  try {
+    let params = e.parameter;
+    if (e.postData && e.postData.contents) {
+      try { params = Object.assign({}, params, JSON.parse(e.postData.contents)); } catch(ex) {}
+    }
+    const result = processAction(params);
+    return makeResponse(result);
+  } catch(err) {
+    return makeResponse({error: err.toString()});
+  }
 }`,
               },
               {
