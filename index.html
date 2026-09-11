@@ -472,20 +472,24 @@ const sheetsAPI = {
   },
 
   campos(visita) {
+    // Limpa campos internos antes de enviar ao Sheets
+    const v = { ...visita };
+    delete v._editadoEm;
+    delete v._acao;
     return {
-      id: String(visita.id || ""),
-      nome: visita.nome || "",
-      telefone: visita.telefone || "",
-      ministerio: visita.ministerio || "",
-      modalidade: visita.modalidade || "Presencial",
-      tipo: visita.tipo || "",
-      data: visita.data || "",
-      lider: visita.lider || "",
-      status: visita.status || "",
-      visitaVirtual: visita.visitaVirtual ? "Sim" : "Não",
-      resultadoLigacao: visita.resultadoLigacao || "",
-      duracao: visita.duracao || "",
-      observacoes: visita.observacoes || "",
+      id: String(v.id || ""),
+      nome: v.nome || "",
+      telefone: v.telefone || "",
+      ministerio: v.ministerio || "",
+      modalidade: v.modalidade || "Presencial",
+      tipo: v.tipo || "",
+      data: v.data || "",
+      lider: v.lider || "",
+      status: v.status || "",
+      visitaVirtual: v.visitaVirtual ? "Sim" : "Não",
+      resultadoLigacao: v.resultadoLigacao || "",
+      duracao: v.duracao || "",
+      observacoes: v.observacoes || "",
     };
   },
 
@@ -1029,7 +1033,7 @@ function App() {
   const [dashFim, setDashFim] = useState("");
   const [sheetConnected] = useState(!!SHEET_URL);
 
-  // Carrega e mescla dados do Sheets com seed/local
+  // Normaliza registro do Sheets/seed para formato interno
   const normalizarRegistro = (v) => {
     const seedMap = Object.fromEntries(SEED_DATA.map(s => [String(s.id), s]));
     const seed = seedMap[String(v.id)] || {};
@@ -1046,23 +1050,28 @@ function App() {
     };
   };
 
-  const PENDING_KEY = "igreja_visitas_pendencias_v1";
-  const loadPending = () => { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || "{}"); } catch { return {}; } };
-  const savePending = (p) => localStorage.setItem(PENDING_KEY, JSON.stringify(p));
-
-  carregarDados = async () => {
+  // Carregamento inicial — lê Sheets e mescla com local
+  const carregarDados = async () => {
     setLoading(true);
+    // Carrega o que está salvo localmente (sempre confiável)
+    const local = loadLocal();
+    const localMap = Object.fromEntries(local.map(v => [String(v.id), v]));
+
     if (SHEET_URL) {
       try {
         const sheetsData = await sheetsAPI.getAll();
         if (sheetsData && Array.isArray(sheetsData) && sheetsData.length > 0) {
-          const pending = loadPending();
-          const sheetsMap = Object.fromEntries(sheetsData.map(v => [String(v.id), normalizarRegistro(v)]));
-          Object.values(pending).forEach(p => {
-            if (p._acao === "delete") delete sheetsMap[p.id];
-            else sheetsMap[p.id] = p;
+          // Regra: local SEMPRE tem prioridade. Sheets só adiciona registros NOVOS
+          // que ainda não existem no local (de outros usuários).
+          sheetsData.forEach(v => {
+            const id = String(v.id);
+            if (!localMap[id]) {
+              // Registro novo vindo de outro usuário — adiciona
+              localMap[id] = normalizarRegistro(v);
+            }
+            // Se já existe no local, IGNORA o que veio do Sheets
           });
-          const merged = Object.values(sheetsMap).sort((a,b) => b.id > a.id ? 1 : -1);
+          const merged = Object.values(localMap).sort((a, b) => b.id > a.id ? 1 : -1);
           setVisitas(merged);
           saveLocal(merged);
           setLoading(false);
@@ -1072,32 +1081,36 @@ function App() {
         console.warn("Erro ao buscar Sheets:", e);
       }
     }
-    setVisitas(loadLocal());
+    setVisitas(local);
     setLoading(false);
   };
 
-  atualizarSilencioso = async () => {
+  // Refresh silencioso — só busca registros NOVOS de outros usuários
+  const atualizarSilencioso = async () => {
     if (!SHEET_URL) return;
     try {
-      const pending = loadPending();
-      for (const [id, reg] of Object.entries(pending)) {
-        if (reg._acao === "delete") await sheetsAPI.delete(id);
-        else if (reg._acao === "add") await sheetsAPI.add(reg);
-        else await sheetsAPI.update(reg);
-      }
-      await new Promise(r => setTimeout(r, 3000));
       const sheetsData = await sheetsAPI.getAll();
       if (!sheetsData || !Array.isArray(sheetsData) || sheetsData.length === 0) return;
-      const sheetsMap = Object.fromEntries(sheetsData.map(v => [String(v.id), normalizarRegistro(v)]));
-      const pendingAtual = loadPending();
-      Object.values(pendingAtual).forEach(p => {
-        if (p._acao === "delete") delete sheetsMap[p.id];
-        else sheetsMap[p.id] = p;
+
+      setVisitas(prev => {
+        const localMap = Object.fromEntries(prev.map(v => [String(v.id), v]));
+        let houveMudanca = false;
+
+        sheetsData.forEach(v => {
+          const id = String(v.id);
+          if (!localMap[id]) {
+            // Registro novo de outro usuário — adiciona sem tocar nos existentes
+            localMap[id] = normalizarRegistro(v);
+            houveMudanca = true;
+          }
+          // Registros existentes: NUNCA sobrescreve
+        });
+
+        if (!houveMudanca) return prev;
+        const resultado = Object.values(localMap).sort((a, b) => b.id > a.id ? 1 : -1);
+        saveLocal(resultado);
+        return resultado;
       });
-      const resultado = Object.values(sheetsMap).sort((a,b) => b.id > a.id ? 1 : -1);
-      setVisitas(resultado);
-      saveLocal(resultado);
-      savePending({});
     } catch(e) {
       console.warn("Erro no refresh:", e);
     }
@@ -1135,26 +1148,12 @@ function App() {
     setEditing(null);
     setSyncing(false);
 
-    // Registra pendência local (garante que o dado nunca se perde mesmo se o Sheets falhar)
+    // Envia ao Sheets em segundo plano (best-effort — local já está salvo e seguro)
     if (SHEET_URL) {
-      const pending = loadPending();
-      const reg = editing
-        ? { ...visitas.find(v => v.id === visita.id) || {}, ...visita, _acao: "update" }
-        : { ...visita, _acao: "add" };
-      pending[String(reg.id)] = reg;
-      savePending(pending);
-
-      // Envia ao Sheets em segundo plano
       try {
-        if (editing) { await sheetsAPI.update(visita); }
-        else { await sheetsAPI.add(visita); }
-        // Confirmado: remove da fila de pendências
-        const p = loadPending();
-        delete p[String(visita.id)];
-        savePending(p);
-      } catch (err) {
-        console.warn("Sheets indisponível, ficará na fila:", err);
-      }
+        if (editing) { sheetsAPI.update(visita); }
+        else { sheetsAPI.add(visita); }
+      } catch (err) {}
     }
   };
 
@@ -1164,17 +1163,8 @@ function App() {
     setVisitas(updated);
     saveLocal(updated);
     setConfirmDelete(null);
-    // Registra pendência de exclusão
-    if (SHEET_URL) {
-      const pending = loadPending();
-      pending[String(id)] = { id: String(id), _acao: "delete" };
-      savePending(pending);
-      sheetsAPI.delete(id).then(() => {
-        const p = loadPending();
-        delete p[String(id)];
-        savePending(p);
-      }).catch(() => {});
-    }
+    // Envia exclusão ao Sheets em segundo plano
+    if (SHEET_URL) { try { sheetsAPI.delete(id); } catch(e) {} }
   };
 
   // Filtros
